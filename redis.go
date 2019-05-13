@@ -26,7 +26,8 @@ type (
 		name string
 		redis.UniversalClient
 		metrics *metrics.Metrics
-		counter *prometheus.CounterVec
+		summary *prometheus.SummaryVec
+		total   *prometheus.CounterVec
 	}
 )
 
@@ -68,17 +69,26 @@ func (r *Redis) ConfigDidLoad(context.Context) {
 	if r.Metrics {
 		r.UniversalClient.WrapProcess(r.metricsProcess)
 		r.UniversalClient.WrapProcessPipeline(r.metricsProcessPipeline)
-		r.counter = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
+		r.summary = prometheus.NewSummaryVec(
+			prometheus.SummaryOpts{
 				Namespace: r.metrics.Namespace,
 				Subsystem: r.metrics.Subsystem,
 				Name:      "redis_command",
-				Help:      "redis command counter",
+				Help:      "redis command elapsed summary",
 			},
-			[]string{"address", "db", "masterName", "pipe", "cmd", "error", "elpsed"},
+			[]string{"address", "db", "masterName", "pipe", "cmd", "error"},
+		)
+		r.total = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: r.metrics.Namespace,
+				Subsystem: r.metrics.Subsystem,
+				Name:      "redis_command_total",
+				Help:      "redis command total",
+			},
+			[]string{"address", "db", "masterName", "pipe", "cmd", "error"},
 		)
 
-		prometheus.MustRegister(r.counter)
+		prometheus.MustRegister(r.summary, r.total)
 	}
 }
 
@@ -102,9 +112,9 @@ func (r *Redis) metricsProcess(old func(redis.Cmder) error) func(redis.Cmder) er
 	return func(cmd redis.Cmder) error {
 		start := time.Now()
 		err := old(cmd)
-		elpsed := time.Now().Sub(start)
+		elapsed := time.Now().Sub(start)
 
-		r.count(false, err, elpsed, cmd)
+		r.report(false, err, elapsed, cmd)
 
 		return err
 	}
@@ -114,21 +124,20 @@ func (r *Redis) metricsProcessPipeline(old func([]redis.Cmder) error) func([]red
 	return func(cmds []redis.Cmder) error {
 		start := time.Now()
 		err := old(cmds)
-		elpsed := time.Now().Sub(start)
+		elapsed := time.Now().Sub(start)
 
-		r.count(true, err, elpsed, cmds...)
+		r.report(true, err, elapsed, cmds...)
 
 		return err
 	}
 }
 
-func (r *Redis) count(pipe bool, err error, elpsed time.Duration, cmds ...redis.Cmder) {
+func (r *Redis) report(pipe bool, err error, elapsed time.Duration, cmds ...redis.Cmder) {
 	addressStr := strings.Join(r.Address, ",")
 	dbStr := fmt.Sprintf("%d", r.DB)
 	masterNameStr := r.MasterName
 	errStr := ""
 	cmdStr := ""
-	eplsedStr := fmt.Sprintf("%f", elpsed.Seconds())
 	pipeStr := fmt.Sprintf("%t", pipe)
 
 	if err != nil && err != redis.Nil {
@@ -147,10 +156,10 @@ func (r *Redis) count(pipe bool, err error, elpsed time.Duration, cmds ...redis.
 		pipeStr,
 		cmdStr,
 		errStr,
-		eplsedStr,
 	}
 
-	r.counter.WithLabelValues(values...).Inc()
+	r.summary.WithLabelValues(values...).Observe(elapsed.Seconds())
+	r.total.WithLabelValues(values...).Inc()
 }
 
 // New a redis
