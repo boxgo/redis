@@ -15,13 +15,13 @@ import (
 type (
 	// Redis config
 	Redis struct {
-		Metrics      bool     `config:"metrics" desc:"default is false"`
-		MasterName   string   `config:"masterName" desc:"The sentinel master name. Only failover clients."`
-		Address      []string `config:"address" desc:"Either a single address or a seed list of host:port addresses of cluster/sentinel nodes."`
-		Password     string   `config:"password" desc:"Redis password"`
-		DB           int      `config:"db" desc:"Database to be selected after connecting to the server. Only single-node and failover clients."`
-		PoolSize     int      `config:"poolSize" desc:"Connection pool size"`
-		MinIdleConns int      `config:"minIdleConns" desc:"min idle connections"`
+		Metrics      bool     `config:"metrics" help:"default is false"`
+		MasterName   string   `config:"masterName" help:"The sentinel master name. Only failover clients."`
+		Address      []string `config:"address" help:"Either a single address or a seed list of host:port addresses of cluster/sentinel nodes."`
+		Password     string   `config:"password" help:"Redis password"`
+		DB           int      `config:"db" help:"Database to be selected after connecting to the server. Only single-node and failover clients."`
+		PoolSize     int      `config:"poolSize" help:"Connection pool size"`
+		MinIdleConns int      `config:"minIdleConns" help:"min idle connections"`
 
 		name string
 		redis.UniversalClient
