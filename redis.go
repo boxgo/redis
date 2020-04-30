@@ -8,7 +8,7 @@ import (
 
 	"github.com/boxgo/box/minibox"
 	"github.com/boxgo/metrics"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v7"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -29,6 +29,10 @@ type (
 		summary *prometheus.SummaryVec
 		total   *prometheus.CounterVec
 	}
+)
+
+const (
+	start = "start"
 )
 
 var (
@@ -67,8 +71,7 @@ func (r *Redis) ConfigDidLoad(context.Context) {
 	})
 
 	if r.Metrics {
-		r.UniversalClient.WrapProcess(r.metricsProcess)
-		r.UniversalClient.WrapProcessPipeline(r.metricsProcessPipeline)
+		r.UniversalClient.AddHook(r)
 		r.summary = prometheus.NewSummaryVec(
 			prometheus.SummaryOpts{
 				Namespace: r.metrics.Namespace,
@@ -108,31 +111,33 @@ func (r *Redis) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (r *Redis) metricsProcess(old func(redis.Cmder) error) func(redis.Cmder) error {
-	return func(cmd redis.Cmder) error {
-		start := time.Now()
-		err := old(cmd)
-		elapsed := time.Now().Sub(start)
-
-		r.report(false, err, elapsed, cmd)
-
-		return err
-	}
+func (r *Redis) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	return context.WithValue(ctx, start, time.Now()), nil
 }
 
-func (r *Redis) metricsProcessPipeline(old func([]redis.Cmder) error) func([]redis.Cmder) error {
-	return func(cmds []redis.Cmder) error {
-		start := time.Now()
-		err := old(cmds)
-		elapsed := time.Now().Sub(start)
+func (r *Redis) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
+	start := ctx.Value(start).(time.Time)
+	elapsed := time.Now().Sub(start)
 
-		r.report(true, err, elapsed, cmds...)
+	r.report(false, elapsed, cmd)
 
-		return err
-	}
+	return nil
 }
 
-func (r *Redis) report(pipe bool, err error, elapsed time.Duration, cmds ...redis.Cmder) {
+func (r *Redis) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
+	return context.WithValue(ctx, start, time.Now()), nil
+}
+
+func (r *Redis) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
+	start := ctx.Value(start).(time.Time)
+	elapsed := time.Now().Sub(start)
+
+	r.report(true, elapsed, cmds...)
+
+	return nil
+}
+
+func (r *Redis) report(pipe bool, elapsed time.Duration, cmds ...redis.Cmder) {
 	addressStr := strings.Join(r.Address, ",")
 	dbStr := fmt.Sprintf("%d", r.DB)
 	masterNameStr := r.MasterName
@@ -140,12 +145,12 @@ func (r *Redis) report(pipe bool, err error, elapsed time.Duration, cmds ...redi
 	cmdStr := ""
 	pipeStr := fmt.Sprintf("%t", pipe)
 
-	if err != nil && err != redis.Nil {
-		errStr = err.Error()
-	}
-
 	for _, cmd := range cmds {
 		cmdStr += cmd.Name() + ";"
+
+		if err := cmd.Err(); err != nil && err != redis.Nil {
+			errStr += err.Error() + ";"
+		}
 	}
 	cmdStr = strings.TrimSuffix(cmdStr, ";")
 
